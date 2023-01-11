@@ -291,23 +291,40 @@ begin
       currentcheat.tag:=i+1;
       currentcheat.AutoSize:=true;
 
-      if lastcheat=nil then
+
+
+
+      //left
+      currentcheat.BorderSpacing.Left := scalex(10,96);
+      currentcheat.AnchorSideLeft.Control:=cheatpanel;
+      currentcheat.AnchorSideLeft.side:=asrLeft;
+
+      //right
+      currentcheat.AnchorSideRight.Control:=cheatpanel;
+      currentcheat.AnchorSideRight.side:=asrRight;
+      currentcheat.BorderSpacing.Right := scalex(20,96);  //ScrollBar width
+
+      if (lastcheat=nil) or (i=0) then
       begin
         //top
-        currentcheat.left:=scalex(10,96);
-        currentcheat.top:=scaley(40,96);
+        //currentcheat.AnchorSideTop.Control:=cheatpanel;
+        //currentcheat.AnchorSideTop.side:=asrTop;
+        //currentcheat.BorderSpacing.Top := scaley(40,96);
+        currentcheat.Top := scaley(40,96);
       end
       else
       begin
         //next one
-        currentcheat.top:=lastcheat.Top+lastcheat.height+scaley(10,96);
-        currentcheat.left:=lastcheat.left;
+        currentcheat.AnchorSideTop.Control:=lastcheat;
+        currentcheat.AnchorSideTop.side:=asrBottom;
+        currentcheat.BorderSpacing.Top := scaley(10,96);
       end;
 
+      currentcheat.Anchors := [akLeft, akRight, akTop];
       currentcheat.hotkeyleft:=hotkeylabel.left-currentcheat.left;
       currentcheat.descriptionleft:=descriptionlabel.left-currentcheat.left;
 
-      currentcheat.width:=cheatpanel.clientwidth-currentcheat.Left-scalex(2,96);
+      //currentcheat.width:=cheatpanel.clientwidth-currentcheat.Left-scalex(22,96);
       currentcheat.anchors:=currentcheat.anchors+[akRight];
 
       currentcheat.Hotkey:=lvCheats.Items[i].Caption;
@@ -1667,6 +1684,8 @@ begin
 
   if btnDesignForm.tag=0 then
   begin
+    buildcheatlist;
+    //sleep(1000);
     mainform.createFormdesigner;
 
     formdesigner.designForm(trainerform);

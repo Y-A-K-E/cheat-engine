@@ -40,7 +40,7 @@ object FormDesigner: TFormDesigner
     end
     object ToolButton6: TToolButton
       Left = 29
-      Height = 32
+      Height = 5
       Top = 2
       Caption = 'ToolButton6'
       Grouped = True
@@ -168,7 +168,7 @@ object FormDesigner: TFormDesigner
     end
     object ToolButton1: TToolButton
       Left = 706
-      Height = 32
+      Height = 5
       Top = 2
       Caption = 'ToolButton1'
       Grouped = True

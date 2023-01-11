@@ -200,7 +200,7 @@ begin
     checkbox.Visible:=true;
 
     checkbox.OnMouseDown:=md;
-    checkbox.enabled:=false;
+    //checkbox.enabled:=false;
 
     hotkeyleft:=checkbox.width+3;
   end

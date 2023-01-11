@@ -29,7 +29,7 @@
       <MajorVersionNr Value="7"/>
       <MinorVersionNr Value="4"/>
       <RevisionNr Value="3"/>
-      <BuildNr Value="7302"/>
+      <BuildNr Value="7324"/>
       <Language Value="041C"/>
       <CharSet Value="04B0"/>
       <StringTable CompanyName="Cheat Engine" FileDescription="Cheat Engine" ProductVersion="7.4.3"/>
@@ -3067,7 +3067,6 @@
       </Item15>
       <Item16>
         <Name Value="EProcess"/>
-        <Enabled Value="False"/>
       </Item16>
       <Item17>
         <Name Value="ESavedScanException"/>
