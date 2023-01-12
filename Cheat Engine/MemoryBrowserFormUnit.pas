@@ -2510,6 +2510,8 @@ begin
     cbOriginalRenderingSystem.checked:=UseOriginalRenderingSystem;
     {$endif}
 
+    cbCenterDisassemblerWhenOutsideView.checked:=disassemblerview.CenterOnAddressChangeOutsideView;
+
 
     lblHexNormal.font.color:=hexview.normalFontColor;
     lblHexNormal.color:=hexview.normalBackgroundColor;
@@ -2554,6 +2556,10 @@ begin
 
       disassemblerview.jlThickness:=jlThickness;
       disassemblerview.jlSpacing:=jlSpacing;
+
+      disassemblerview.CenterOnAddressChangeOutsideView:=cbCenterDisassemblerWhenOutsideView.checked;
+
+
 
       hexview.HexFont:=fontdialog2.Font;
 
@@ -2624,6 +2630,9 @@ begin
       reg.writeInteger('spaceBelowLines', disassemblerview.SpaceBelowLines);
       reg.writeInteger('jlThickness', disassemblerview.jlThickness);
       reg.writeInteger('jlSpacing', disassemblerview.jlSpacing);
+
+
+      reg.WriteBool('CenterOnAddressChangeOutsideView', disassemblerview.CenterOnAddressChangeOutsideView);
     end;
 
     if reg.OpenKey('\Software\'+strCheatEngine+'\Disassemblerview '+inttostr(screen.PixelsPerInch)+'\Font'+darkmodestring,true) then
@@ -2882,6 +2891,9 @@ begin
 
       if reg.ValueExists('jlSpacing') then
         disassemblerview.jlSpacing:=reg.ReadInteger('jlSpacing');
+
+      if reg.ValueExists('CenterOnAddressChangeOutsideView') then
+        disassemblerview.CenterOnAddressChangeOutsideView:=reg.ReadBool('CenterOnAddressChangeOutsideView');
 
       disassemblerview.reinitialize;
     end;
@@ -3624,103 +3636,101 @@ begin
         exit;
       end;
 
-      try
-        if Assemble(assemblercode,Address,bytes) then
+
+      if Assemble(assemblercode,Address,bytes) then
+      begin
+        if originalsize<>length(bytes) then
         begin
-          if originalsize<>length(bytes) then
+          if formsettings.replacewithnops.checked then
           begin
-            if formsettings.replacewithnops.checked then
+            if formsettings.askforreplacewithnops.checked then
             begin
-              if formsettings.askforreplacewithnops.checked then
+              c:=messagedlg(Format(rsTheGeneratedCodeIsByteSLongButTheSelectedOpcodeIsB, [IntToStr(length(bytes)), IntToStr(originalsize)]), mtConfirmation, mbYesNoCancel, 0);
+              replace:=c=mryes;
+              if c=mrCancel then exit;
+            end else replace:=true;
+
+            if replace then
+            begin
+              while originalsize>length(bytes) do
               begin
-                c:=messagedlg(Format(rsTheGeneratedCodeIsByteSLongButTheSelectedOpcodeIsB, [IntToStr(length(bytes)), IntToStr(originalsize)]), mtConfirmation, mbYesNoCancel, 0);
-                replace:=c=mryes;
-                if c=mrCancel then exit;
-              end else replace:=true;
-
-              if replace then
-              begin
-                while originalsize>length(bytes) do
-                begin
-                  setlength(bytes,length(bytes)+1);
-                  bytes[length(bytes)-1]:=$90;
-                end;
-
-                a:=Address+length(bytes);
-
-                b:=Address;
-                while b<a do disassemble(b,desc);
-
-                a:=b-Address;
-                while length(bytes)<a do
-                begin
-                  setlength(bytes,length(bytes)+1);
-                  bytes[length(bytes)-1]:=$90;
-                end;
+                setlength(bytes,length(bytes)+1);
+                bytes[length(bytes)-1]:=$90;
               end;
 
+              a:=Address+length(bytes);
 
+              b:=Address;
+              while b<a do disassemble(b,desc);
+
+              a:=b-Address;
+              while length(bytes)<a do
+              begin
+                setlength(bytes,length(bytes)+1);
+                bytes[length(bytes)-1]:=$90;
+              end;
             end;
+
+
           end;
+        end;
 
-          //note to self, check the size of the current opcode and give the option to replace the missing or too many bytes with nops
-          //and put in a option to disable showing that message, and use a default action
+        //note to self, check the size of the current opcode and give the option to replace the missing or too many bytes with nops
+        //and put in a option to disable showing that message, and use a default action
 
-          // get old security and set new security   (not needed in win9x but nt doesnt even allow writeprocessmemory to do this
-          original:=0;
+        // get old security and set new security   (not needed in win9x but nt doesnt even allow writeprocessmemory to do this
+        original:=0;
 
-          bytelength:=length(bytes);
+        bytelength:=length(bytes);
 
-          if oldbp<>nil then
-            debuggerthread.UnsetBreakpoint(oldbp);
+        if oldbp<>nil then
+          debuggerthread.UnsetBreakpoint(oldbp);
 
-          a:=0;
-          if fcr3=0 then
-          begin
-            if SystemSupportsWritableExecutableMemory or SkipVirtualProtectEx then
-              vpe:=(SkipVirtualProtectEx=false) and VirtualProtectEx(processhandle,  pointer(Address),bytelength,PAGE_EXECUTE_READWRITE,p)
-            else
-            begin
-              outputdebugstring('First making memory writable');
-              if processid<>GetCurrentProcessId then
-                ntsuspendProcess(processhandle);
-              vpe:=(SkipVirtualProtectEx=false) and VirtualProtectEx(processhandle,  pointer(Address),bytelength,PAGE_READWRITE,p)
-            end;
-            WriteProcessMemoryWithCloakSupport(processhandle,pointer(Address),@bytes[0],bytelength,a);
-
-            if vpe then
-            begin
-              VirtualProtectEx(processhandle,pointer(Address),bytelength,p,p);
-              outputdebugstring('restoring back to the original protection: '+p.ToString);
-            end;
-
-            if (not (SystemSupportsWritableExecutableMemory or SkipVirtualProtectEx)) and (processid<>GetCurrentProcessId) then
-              ntresumeProcess(processhandle);
-          end
+        a:=0;
+        if fcr3=0 then
+        begin
+          if SystemSupportsWritableExecutableMemory or SkipVirtualProtectEx then
+            vpe:=(SkipVirtualProtectEx=false) and VirtualProtectEx(processhandle,  pointer(Address),bytelength,PAGE_EXECUTE_READWRITE,p)
           else
           begin
-            {$ifdef windows}
-            WriteProcessMemoryCR3(fcr3, pointer(address),@bytes[0], bytelength,a);
-            {$endif}
+            outputdebugstring('First making memory writable');
+            if processid<>GetCurrentProcessId then
+              ntsuspendProcess(processhandle);
+            vpe:=(SkipVirtualProtectEx=false) and VirtualProtectEx(processhandle,  pointer(Address),bytelength,PAGE_READWRITE,p)
           end;
+          WriteProcessMemoryWithCloakSupport(processhandle,pointer(Address),@bytes[0],bytelength,a);
 
-          if (a>0) and (oldbp<>nil) then
+          if vpe then
           begin
-            oldbp^.originalbyte:=bytes[0];
-            debuggerthread.SetBreakpoint(oldbp);
+            VirtualProtectEx(processhandle,pointer(Address),bytelength,p,p);
+            outputdebugstring('restoring back to the original protection: '+p.ToString);
           end;
 
-          hexview.update;
-          disassemblerview.Update;
-
-          {$ifdef darwin}
-          SetFocus;
-          disassemblerview.SetFocus;
+          if (not (SystemSupportsWritableExecutableMemory or SkipVirtualProtectEx)) and (processid<>GetCurrentProcessId) then
+            ntresumeProcess(processhandle);
+        end
+        else
+        begin
+          {$ifdef windows}
+          WriteProcessMemoryCR3(fcr3, pointer(address),@bytes[0], bytelength,a);
           {$endif}
-        end else raise exception.create(Format(rsIDonTUnderstandWhatYouMeanWith, [assemblercode]));
-      except
-        raise exception.create(Format(rsIDonTUnderstandWhatYouMeanWith, [assemblercode]));
-      end;
+        end;
+
+        if (a>0) and (oldbp<>nil) then
+        begin
+          oldbp^.originalbyte:=bytes[0];
+          debuggerthread.SetBreakpoint(oldbp);
+        end;
+
+        hexview.update;
+        disassemblerview.Update;
+
+        {$ifdef darwin}
+        SetFocus;
+        disassemblerview.SetFocus;
+        {$endif}
+      end else raise exception.create(Format(rsIDonTUnderstandWhatYouMeanWith, [assemblercode]));
+
 
     end;
 

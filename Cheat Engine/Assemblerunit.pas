@@ -368,6 +368,7 @@ const opcodes: array [1..opcodecount] of topcode =(
   (mnemonic:'CMPSD';bytes:1;bt1:$a7),
   (mnemonic:'CMPSD';opcode1:eo_reg;opcode2:eo_ib;paramtype1:par_xmm;paramtype2:par_xmm_m64;paramtype3:par_imm8;bytes:3;bt1:$f2;bt2:$0f;bt3:$c2),
   (mnemonic:'CMPSS';opcode1:eo_reg;opcode2:eo_ib;paramtype1:par_xmm;paramtype2:par_xmm_m32;paramtype3:par_imm8;bytes:3;bt1:$f3;bt2:$0f;bt3:$c2),
+
   (mnemonic:'CMPSW';bytes:2;bt1:$66;bt2:$a7),
   (mnemonic:'CMPXCHG';opcode1:eo_reg;paramtype1:par_rm8;paramtype2:par_r8;bytes:2;bt1:$0f;bt2:$b0),
   (mnemonic:'CMPXCHG';opcode1:eo_reg;paramtype1:par_rm16;paramtype2:par_r16;bytes:3;bt1:$66;bt2:$0f;bt3:$b1),
@@ -2791,7 +2792,7 @@ uses {$ifdef darwin}
   windows,
   {$endif}
   CEFuncProc, symbolhandler, lua, luahandler, lualib, assemblerArm, Parsers,
-  NewKernelHandler, LuaCaller, math, cpuidUnit, classes, controls;
+  NewKernelHandler, LuaCaller, math, cpuidUnit, classes, controls, StringHashList;
 {$endif}
 
 resourcestring
@@ -2804,7 +2805,7 @@ resourcestring
   rsInvalidAddress = 'Invalid address';
   rsTheAssemblerTriedToSetARegisteValueThatIsTooHigh = 'The assembler tried to set a register value that is too high';
   rsAssemblerError = 'Assembler error';
-  rsOffsetTooBig = 'offset too big';
+  rsOffsetTooBig = 'This instruction can not be assembled because the distance between the current address and addressed address is too big. Try placing the address in a register first and use that';
   rsInvalidValueFor32Bit = 'The value provided can not be encoded in a 32-bit field';
   rsInvalid64BitValueFor32BitField = 'The value %.16x can not be encoded using a 32-bit signed value. But if you meant %.16x then that''s ok and you should have provided it like that in the first place.  Is it ok to change it to this?'#13#10'(This is the only time asked and will be remembered until you restart CE)';
 
@@ -2812,6 +2813,8 @@ var
   ExtraAssemblers: array of TAssemblerEvent;
   naggedTheUserAboutWrongSignedValue: boolean;
   naggedTheUserAboutWrongSignedValueAnswer: boolean;
+
+  pseudooplist: TStringHashList;
 
 
 function registerAssembler(m: TAssemblerEvent): integer;
@@ -4713,6 +4716,87 @@ begin
   result:=sla.assemble(opcode, address, bytes, assemblerPreference, skiprangecheck);
 end;
 
+type
+  TPseudoOpHandler=procedure(var tokens: ttokens; mnemonic: integer; optval: integer);
+  TPseudoOpData=record
+    handler: TPseudoOpHandler;
+    optval: integer;
+  end;
+  PPseudoOpData=^TPseudoOpData;
+
+procedure pseudoOpCMPSD(var tokens: ttokens; mnemonic: integer; optval: integer);
+begin
+  setlength(tokens,length(tokens)+1);
+  tokens[length(tokens)-1]:=inttostr(optval);
+  tokens[mnemonic]:='CMPSD';
+end;
+
+procedure pseudoOpVCMPSD(var tokens: ttokens; mnemonic: integer; optval: integer);
+begin
+  setlength(tokens,length(tokens)+1);
+  tokens[length(tokens)-1]:=inttostr(optval);
+  tokens[mnemonic]:='VCMPSD';
+end;
+
+procedure pseudoOpCMPSS(var tokens: ttokens; mnemonic: integer; optval: integer);
+begin
+  setlength(tokens,length(tokens)+1);
+  tokens[length(tokens)-1]:=inttostr(optval);
+  tokens[mnemonic]:='CMPSS';
+end;
+
+procedure pseudoOpVCMPSS(var tokens: ttokens; mnemonic: integer; optval: integer);
+begin
+  setlength(tokens,length(tokens)+1);
+  tokens[length(tokens)-1]:=inttostr(optval);
+  tokens[mnemonic]:='VCMPSS';
+end;
+
+
+procedure pseudoOpCMPPD(var tokens: ttokens; mnemonic: integer; optval: integer);
+begin
+  setlength(tokens,length(tokens)+1);
+  tokens[length(tokens)-1]:=inttostr(optval);
+  tokens[mnemonic]:='CMPPD';
+end;
+
+procedure pseudoOpVCMPPD(var tokens: ttokens; mnemonic: integer; optval: integer);
+begin
+  setlength(tokens,length(tokens)+1);
+  tokens[length(tokens)-1]:=inttostr(optval);
+  tokens[mnemonic]:='VCMPPD';
+end;
+
+procedure pseudoOpCMPPS(var tokens: ttokens; mnemonic: integer; optval: integer);
+begin
+  setlength(tokens,length(tokens)+1);
+  tokens[length(tokens)-1]:=inttostr(optval);
+  tokens[mnemonic]:='CMPPS';
+end;
+
+procedure pseudoOpVCMPPS(var tokens: ttokens; mnemonic: integer; optval: integer);
+begin
+  setlength(tokens,length(tokens)+1);
+  tokens[length(tokens)-1]:=inttostr(optval);
+  tokens[mnemonic]:='VCMPPS';
+end;
+
+function handlePseudoOps(var tokens: ttokens; mnemonic: integer):boolean;
+var
+  h: PPseudoOpData;
+begin
+  h:=pseudooplist.Data[tokens[mnemonic]];
+  if h<>nil then
+  begin
+    h^.handler(tokens, mnemonic, h^.optval);
+    result:=true;
+  end
+  else
+    result:=false;
+
+
+end;
+
 function TSingleLineAssembler.Assemble(opcode:string; address: ptrUint;var bytes: TAssemblerBytes;assemblerPreference: TassemblerPreference=apNone; skiprangecheck: boolean=false): boolean;
 var tokens: ttokens;
     i,j,k,l: integer;
@@ -4748,7 +4832,9 @@ var tokens: ttokens;
     //cpuinfo: TCPUIDResult;
 
     bts: TAssemblerBytes;
+    errorifnotfound: string;
 begin
+  errorifnotfound:='';
   i:=0;
   j:=0;
   k:=0;
@@ -5006,6 +5092,10 @@ begin
 
   if mnemonic=-1 then exit;
 
+  if handlePseudoOps(tokens, mnemonic) then
+    nroftokens:=length(tokens);
+
+
   setlength(bytes,mnemonic);
   for i:=0 to mnemonic-1 do
   begin
@@ -5014,6 +5104,8 @@ begin
     if tokens[i]='REPE' then bytes[i]:=$f3 else
     if tokens[i]='LOCK' then bytes[i]:=$f0;
   end;
+
+
 
 
   //this is just to speed up the finding of the right opcode
@@ -6424,8 +6516,8 @@ begin
 
                 if v>$7fffffff then
                 begin
-                  OutputDebugString('Assembler could not assemble using r32,rm32: searching of alternatives');
-
+                  //OutputDebugString('Assembler could not assemble using r32,rm32: searching of alternatives');
+                 // errorifnotfound:=rsOffsetTooBig;
                   setlength(bytes,0);
                   paramtype1:=oldParamtype1;
                   paramtype2:=oldParamtype2;
@@ -8284,6 +8376,11 @@ begin
 
 
       end;
+    end
+    else
+    begin
+      if errorifnotfound<>'' then
+        raise exception.Create(errorifnotfound);
     end;
 
     if needsAddressSwitchPrefix then //add it
@@ -8438,6 +8535,21 @@ begin
     oldReleaseThreadVars;
 end;
 
+procedure addPseudoOpListEntry(op: string; handler: TPseudoOpHandler; optval: integer);
+var p: PPseudoOpData;
+begin
+  getmem(p, SizeOf(TPseudoOpData));
+  p^.handler:=handler;
+  p^.optval:=optval;
+  pseudooplist.Add(op,p);
+end;
+
+
+var pseudoopequations: array [0..31] of string = ('EQ', 'LT', 'LE', 'ONORD','NEQ', 'NLT', 'NLE', 'ORD',
+                                                  'EQ_UQ', 'NGE', 'NGT', 'FALSE', 'NEQ_OQ', 'GE', 'GT','TRUE',
+                                                  'EQ_OS', 'LT_OQ', 'LE_OQ', 'UNORD_S', 'NEQ_US', 'NLT_UQ','NLE_UQ','ORD_S',
+                                                  'EQ_US', 'NGE_UQ', 'NGT_UQ', 'FALSE_OS', 'NEQ_OS', 'GE_OQ','GT_OQ','TRUE_US');
+
 initialization
 //setup the index for the assembler
 
@@ -8510,6 +8622,44 @@ initialization
 
     end;
   end;
+
+
+  pseudoOplist:=TStringHashList.Create(true);
+
+  for i:=0 to 8 do
+    addPseudoOpListEntry('CMP'+pseudoopequations[i]+'SD', @pseudoOpCMPSD,i);
+
+  for i:=0 to 31 do
+    addPseudoOpListEntry('VCMP'+pseudoopequations[i]+'SD', @pseudoOpVCMPSD,i);
+
+
+  for i:=0 to 8 do
+    addPseudoOpListEntry('CMP'+pseudoopequations[i]+'SS', @pseudoOpCMPSS,i);
+
+  for i:=0 to 31 do
+    addPseudoOpListEntry('VCMP'+pseudoopequations[i]+'SS', @pseudoOpVCMPSS,i);
+
+
+  for i:=0 to 8 do
+    addPseudoOpListEntry('CMP'+pseudoopequations[i]+'PD', @pseudoOpCMPPD,i);
+
+  for i:=0 to 31 do
+    addPseudoOpListEntry('VCMP'+pseudoopequations[i]+'PD', @pseudoOpVCMPPD,i);
+
+
+  for i:=0 to 8 do
+    addPseudoOpListEntry('CMP'+pseudoopequations[i]+'PS', @pseudoOpCMPPS,i);
+
+  for i:=0 to 31 do
+    addPseudoOpListEntry('VCMP'+pseudoopequations[i]+'PS', @pseudoOpVCMPPS,i);
+
+
+
+
+
+
+
+
 
 
   GetThreadManager(tm);

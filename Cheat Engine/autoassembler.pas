@@ -85,7 +85,7 @@ uses strutils, memscan, disassembler, networkInterface, networkInterfaceApi,
 uses simpleaobscanner, StrUtils, LuaHandler, memscan, disassembler, networkInterface,
      networkInterfaceApi, LuaCaller, SynHighlighterAA, Parsers, Globals, memoryQuery,
      MemoryBrowserFormUnit, MemoryRecordUnit{$ifdef windows}, vmxfunctions{$endif}, autoassemblerexeptionhandler,
-     UnexpectedExceptionsHelper, types, autoassemblercode, System.UITypes;
+     UnexpectedExceptionsHelper, types, autoassemblercode, System.UITypes, frmautoinjectunit;
 {$endif}
 
 
@@ -162,7 +162,15 @@ resourcestring
   rsNoPreferedRangeAllocWarning = 'None of the ALLOC statements specify a '
     +'prefered address.  Did you take into account that the JMP instruction is'
     +' going to be 14 bytes long?';
-  rsFailureAlloc = 'Failure allocating memory near %.8x for variable named %s in script %s';
+  rsFailureAlloc = 'Failure allocating memory near %.8x for variable named %s';
+  rsFailureGettingOriginalInstruction = 'Failure getting the instruction at %x';
+  rsNearbyAllocationError = 'Nearby allocation error';
+  rsNearbyAllocationErrorMessageQuestion = 'This script uses nearby allocation'
+    +' but it is impossible to allocate nearby %x. Please rewrite the script '
+    +'to function without nearby allocation.  Try executing the script anyhow '
+    +'and allocate on a region outside reach of 2GB? (The target will crash if'
+    +' the script was not designed with this failure in mind)';
+  rsFailureAssembling = 'Failure assembling %s at %.8x';
 
 //type
 //  TregisteredAutoAssemblerCommands =  TFPGList<TRegisteredAutoAssemblerCommand>;
@@ -189,10 +197,12 @@ type
 procedure TAllocWarn.AllocFailedQuestion;
 var r:TModalResult;
 begin
-  r:=MessageDlg('This script uses nearby allocation but it is impossible to allocate nearby '+preferedaddress.ToHexString+'. Please rewrite the script to function without nearby allocation.  Try executing the script anyhow and allocate on a region outside reach of 2GB? The target will crash if the script was not designed with this failure in mind', mtError,[mbyes,mbno,mbYesToAll, mbNoToAll],0);
-  if r in [mryes,mrYesToAll] then NearbyAllocationFailureFatal:=false;
+  r:=MessageDlg(rsNearbyAllocationError, Format(
+    rsNearbyAllocationErrorMessageQuestion, [preferedaddress]),
+    mtError, [mbyes, mbno, mbYesToAll, mbNoToAll], 0);
+  NearbyAllocationFailureFatal:=r in [mryes,mrYesToAll];
 
-  if r=mrYesToAll then
+  if r in [mrYesToAll, mrNoToAll] then
     WarnOnNearbyAllocationFailure:=false;
 end;
 
@@ -2396,6 +2406,32 @@ begin
                 raise exception.Create(format(rsXCouldNotBeFound, [s1]));
               end;
 
+
+              multilineinjection:=TStringList.create;
+              GetOriginalInstruction(testptr, multilineinjection, processhandler.is64Bit);
+
+              if multilineinjection.count=0 then
+                raise exception.create(format(rsFailureGettingOriginalInstruction, [testptr]));
+
+              if trim(multilineinjection[0]).StartsWith('//') then    //skip comments
+                setlength(assemblerlines, length(assemblerlines)-1)
+              else
+              begin
+                assemblerlines[length(assemblerlines)-1].linenr:=currentlinenr;
+                assemblerlines[length(assemblerlines)-1].line:=multilineinjection[0];
+              end;
+
+              for j:=1 to multilineinjection.Count-1 do
+              begin
+                setlength(assemblerlines, length(assemblerlines)+1);
+                assemblerlines[length(assemblerlines)-1].linenr:=currentlinenr;
+                assemblerlines[length(assemblerlines)-1].line:=multilineinjection[j];
+              end;
+
+
+              freeandnil(multilineinjection);
+              continue;
+              {
               disassembler:=TDisassembler.create;
               disassembler.dataOnly:=true;
               disassembler.disassemble(testptr, s1);
@@ -2405,7 +2441,7 @@ begin
 
               assemblerlines[length(assemblerlines)-1].linenr:=currentlinenr;
               assemblerlines[length(assemblerlines)-1].line:=currentline;
-              disassembler.free;
+              disassembler.free;                                        }
             end else raise exception.Create(rsWrongSyntaxReAssemble);
 
           end;
@@ -3128,7 +3164,7 @@ begin
 
       end;
 
-
+    {
     //check for the 3th alloc parameter when testing the validity of the script, and ask if the user understands what will happen
     if popupmessages and processhandler.is64Bit and usesaobscan and (length(allocs)>0) then
     begin
@@ -3144,7 +3180,7 @@ begin
 
       if (prefered=0) and (MessageDlg(rsNoPreferedRangeAllocWarning, mtWarning, [mbyes, mbno], 0)<>mryes) then
         exit(false);
-    end;
+    end;}
 
     if syntaxcheckonly then
       exit(true);
@@ -3257,14 +3293,18 @@ begin
                 begin
                   with TAllocWarn.create do
                   begin
-                    preferedaddress:=prefered;
+                    if allocs[j].prefered<>0 then
+                      preferedaddress:=allocs[j].prefered
+                    else
+                      preferedaddress:=prefered;
+
                     warn;
                     free;
                   end;
                 end;
 
                 if NearbyAllocationFailureFatal then
-                  raise EAssemblerException.create(format(rsFailureAlloc, [prefered,allocs[j].varname, code.text]))
+                  raise EAssemblerException.create(format(rsFailureAlloc, [prefered,allocs[j].varname]))
                 else
                 begin
                   if SystemSupportsWritableExecutableMemory then
@@ -3333,7 +3373,31 @@ begin
           allocs[j].address:=lastChanceAllocPrefered(prefered,x, protection);
 
         if allocs[j].address=0 then
-          raise EAssemblerException.create(format(rsFailureAlloc, [prefered,allocs[j].varname, code.text]));
+        begin
+          if WarnOnNearbyAllocationFailure then
+          begin
+            with TAllocWarn.create do
+            begin
+              if allocs[j].prefered<>0 then
+                preferedaddress:=allocs[j].prefered
+              else
+                preferedaddress:=prefered;
+              warn;
+              free;
+            end;
+          end;
+
+          if NearbyAllocationFailureFatal then
+            raise EAssemblerException.create(format(rsFailureAlloc, [prefered,allocs[j].varname]))
+          else
+          begin
+            if SystemSupportsWritableExecutableMemory then
+              allocs[j].address:=ptrUint(virtualallocex(processhandle,nil,x, MEM_RESERVE or MEM_COMMIT,PAGE_EXECUTE_READWRITE))
+            else
+              allocs[j].address:=ptrUint(virtualallocex(processhandle,nil,x, MEM_RESERVE or MEM_COMMIT,PAGE_READWRITE));
+          end;
+        end;
+
          // allocs[j].address:=ptrUint(virtualallocex(processhandle,nil,x, MEM_RESERVE or MEM_COMMIT,protection));
 
         if allocs[j].address=0 then raise EAssemblerException.create(rsFailureToAllocateMemory);
@@ -3422,6 +3486,7 @@ begin
           begin
             if (tokencheck(currentline,labels[j].labelname)) then
             begin
+              //this instruction references a label
               if not labels[j].defined then
               begin
                 //the address hasn't been found yet
@@ -3602,7 +3667,7 @@ begin
 
         if ok1 then continue;
 
-        if currentline[length(currentline)]=':' then
+        if currentline[length(currentline)]=':' then //address setter/assigner
         begin
           ok1:=false;
           for j:=0 to length(labels)-1 do
@@ -3707,7 +3772,10 @@ begin
             assemble(currentline,currentaddress,assembled[length(assembled)-1].bytes);
         end
         else
-          assemble(currentline,currentaddress,assembled[length(assembled)-1].bytes);
+        begin
+          if assemble(currentline,currentaddress,assembled[length(assembled)-1].bytes) =false then
+            raise exception.create(Format(rsFailureAssembling, [currentline, currentaddress]));
+        end;
 
         inc(currentaddress,length(assembled[length(assembled)-1].bytes));
       end;
